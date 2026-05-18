@@ -467,14 +467,36 @@
     return work.toDataURL('image/png');
   }
 
-  function buildExportData() {
+  function isEmbeddedDataUrl(value) {
+    return /^data:/i.test(String(value || ''));
+  }
+
+  async function toDataUrl(url) {
+    if (!url || isEmbeddedDataUrl(url)) return url;
+    const response = await fetch(url, { cache: 'force-cache' });
+    if (!response.ok) throw new Error(`Cannot embed ${url}`);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function buildExportData() {
+    const inkDataUrl = await toDataUrl(state.inkDataUrl);
+    const sourceDataUrl = await toDataUrl(state.sourceDataUrl).catch(() => inkDataUrl);
+    const gradientDataUrl = isEmbeddedDataUrl(state.gradientDataUrl)
+      ? state.gradientDataUrl
+      : await makeGradientInk(inkDataUrl);
     return {
       version: 1,
       canvas: state.size,
       sourceName: state.sourceName,
-      sourceDataUrl: state.sourceDataUrl,
-      inkDataUrl: state.inkDataUrl,
-      gradientDataUrl: state.gradientDataUrl,
+      sourceDataUrl,
+      inkDataUrl,
+      gradientDataUrl,
       params: state.params,
       colors: state.colors,
       strokes: state.strokes.map((stroke, index) => ({
@@ -729,20 +751,22 @@
     setState(state.strokes.length ? '动态预览已刷新并循环播放' : '预览为静态底图：请先描写笔顺');
   }
 
-  function exportJson() {
-    const project = buildExportData();
+  async function exportJson() {
+    setState('正在内嵌图片并生成工程 JSON');
+    const project = await buildExportData();
     output.value = JSON.stringify(project, null, 2);
     output.focus();
     output.select();
-    setState('工程 JSON 已生成');
+    setState('工程 JSON 已生成，图片已内嵌');
   }
 
   function escapeScriptEnd(text) {
     return text.replace(/<\/script/gi, '<\\/script');
   }
 
-  function exportHtml() {
-    const project = JSON.stringify(buildExportData());
+  async function exportHtml() {
+    setState('正在内嵌图片并导出网页');
+    const project = JSON.stringify(await buildExportData());
     const html = `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -773,7 +797,7 @@
     a.download = 'dynamic-signature.html';
     a.click();
     URL.revokeObjectURL(url);
-    setState('完整网页已导出');
+    setState('完整网页已导出，下载后可直接打开');
   }
 
   function inlineExportCss() {
