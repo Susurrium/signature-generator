@@ -28,6 +28,7 @@
     currentRegion: null,
     replaying: false,
     projectReady: false,
+    demoProject: false,
     size: { ...DEFAULT_SIZE },
     sourceName: '',
     sourceDataUrl: '',
@@ -95,7 +96,7 @@
     else setWorkflowStep('preview');
     if (canvasHelp) {
       canvasHelp.textContent = state.projectReady
-        ? (state.mode === 'stroke' ? '按真实书写顺序描中心线；每次按下到松开是一笔。' : '选择当前笔画，用套索/矩形圈出该笔负责显现的墨迹。')
+        ? (state.demoProject ? '当前加载的是示例项目。可以直接观察预览，或上传自己的签名开始新项目。' : (state.mode === 'stroke' ? '按真实书写顺序描中心线；每次按下到松开是一笔。' : '选择当前笔画，用套索/矩形圈出该笔负责显现的墨迹。'))
         : '先上传签名。这里用于描笔顺和划区域，不是最终动画预览。';
     }
   }
@@ -662,6 +663,7 @@
   function importProject(project) {
     state.size = project.canvas || { ...DEFAULT_SIZE };
     state.projectReady = Boolean(project.inkDataUrl || project.sourceDataUrl);
+    state.demoProject = false;
     state.sourceName = project.sourceName || 'signature.png';
     state.sourceDataUrl = project.sourceDataUrl || state.sourceDataUrl;
     state.inkDataUrl = project.inkDataUrl || state.inkDataUrl;
@@ -1069,6 +1071,7 @@
     if (!file) return;
     state.sourceName = file.name;
     state.projectReady = true;
+    state.demoProject = false;
     state.sourceDataUrl = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
@@ -1101,8 +1104,61 @@
     reader.readAsText(file);
   });
 
+  async function bootstrapDemo() {
+    try {
+      const [projectResponse, sourceResponse, inkResponse, gradientResponse] = await Promise.all([
+        fetch('./stroke-order.json'),
+        fetch('./signature-original.png'),
+        fetch('./signature-original-transparent.png'),
+        fetch('./signature-gradient.png'),
+      ]);
+      if (!projectResponse.ok || !sourceResponse.ok || !inkResponse.ok || !gradientResponse.ok) throw new Error('demo unavailable');
+      const [project, sourceBlob, inkBlob, gradientBlob] = await Promise.all([
+        projectResponse.json(),
+        sourceResponse.blob(),
+        inkResponse.blob(),
+        gradientResponse.blob(),
+      ]);
+      const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(blob);
+      });
+      state.size = project.canvas || { ...DEFAULT_SIZE };
+      state.sourceName = '示例签名';
+      state.sourceDataUrl = await blobToDataUrl(sourceBlob);
+      state.inkDataUrl = await blobToDataUrl(inkBlob);
+      state.gradientDataUrl = await blobToDataUrl(gradientBlob);
+      state.projectReady = true;
+      state.demoProject = true;
+      state.strokes = (project.strokes || []).map((stroke, index) => ({
+        id: index + 1,
+        pointerType: stroke.pointerType || 'imported',
+        duration: Number(stroke.duration || 0),
+        points: (stroke.points || []).map((point) => ({
+          x: Number(point.x),
+          y: Number(point.y),
+          t: Number(point.t || 0),
+          pressure: Number(point.pressure || 0.5),
+        })),
+      })).filter((stroke) => stroke.points.length >= 2);
+      state.regions = (project.regions || []).map((region, index) => ({ ...region, id: index + 1 }));
+      guide.src = state.sourceDataUrl;
+      resizeCanvas();
+      updateControls();
+      await renderPreviews();
+      draw();
+      setState('已加载示例项目。上传签名可开始自己的项目');
+    } catch {
+      resizeCanvas();
+      updateControls();
+      renderPreviews();
+      draw();
+    }
+  }
+
   resizeCanvas();
   updateControls();
-  renderPreviews();
-  draw();
+  bootstrapDemo();
 })();

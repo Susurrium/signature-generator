@@ -155,8 +155,10 @@ button[aria-pressed="true"] {
 }
 
 .step-number {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
   width: 34px;
   height: 34px;
   border-radius: 999px;
@@ -165,6 +167,7 @@ button[aria-pressed="true"] {
   font-weight: 800;
   font-size: 1.05rem;
   line-height: 1;
+  text-align: center;
 }
 
 .step.is-active {
