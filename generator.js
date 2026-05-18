@@ -33,6 +33,8 @@
     gradientDataUrl: './signature-gradient.png',
     strokes: [],
     regions: [],
+    previewVersion: 0,
+    previewTimer: null,
     params: {
       speed: 0.82,
       overlap: 210,
@@ -77,6 +79,15 @@
 
   function setState(text) {
     stateEl.textContent = text;
+  }
+
+  function requestPreviewRender(message) {
+    if (message) setState(message);
+    if (state.previewTimer) clearTimeout(state.previewTimer);
+    state.previewTimer = setTimeout(() => {
+      state.previewTimer = null;
+      renderPreviews();
+    }, 220);
   }
 
   function resizeCanvas() {
@@ -322,6 +333,7 @@
       state.strokes.push(state.currentStroke);
       state.selectedStrokeId = state.currentStroke.id;
       setState(`已保存第 ${state.currentStroke.id} 笔`);
+      requestPreviewRender(`已保存第 ${state.currentStroke.id} 笔，正在刷新动态预览`);
     } else {
       setState('这一笔太短，已忽略');
     }
@@ -368,6 +380,7 @@
     if (validRect || validPolygon) {
       state.regions.push(normalizeRegion(state.currentRegion));
       setState(`已保存第 ${state.selectedStrokeId} 笔的区域`);
+      requestPreviewRender(`已保存第 ${state.selectedStrokeId} 笔区域，正在刷新动态预览`);
     } else {
       setState('区域太小，已忽略');
     }
@@ -675,6 +688,17 @@
             layer.setAttribute('opacity', '0');
           });
         }, 220);
+        this.schedule(() => {
+          if (finalLayer) {
+            finalLayer.style.transitionDuration = '900ms';
+            finalLayer.style.opacity = '0';
+            finalLayer.setAttribute('opacity', '0');
+          }
+          this.schedule(() => {
+            if (finalLayer) finalLayer.style.transitionDuration = '';
+            this.play();
+          }, 900);
+        }, 220 + state.params.hold);
       }, this.totalDuration);
     }
   }
@@ -692,13 +716,17 @@
   }
 
   async function renderPreviews() {
+    const version = state.previewVersion + 1;
+    state.previewVersion = version;
     state.gradientDataUrl = await makeGradientInk(state.inkDataUrl);
+    if (version !== state.previewVersion) return;
     state.players.forEach((player) => player.destroy());
     state.players = [
       new PreviewPlayer(previewStages.black, 'black'),
       new PreviewPlayer(previewStages.gradient, 'gradient'),
     ];
     state.players.forEach((player) => player.build());
+    setState(state.strokes.length ? '动态预览已刷新并循环播放' : '预览为静态底图：请先描写笔顺');
   }
 
   function exportJson() {
@@ -967,6 +995,7 @@ body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,s
     state.selectedStrokeId = Math.max(1, state.strokes.length);
     updateControls();
     draw();
+    requestPreviewRender('已撤销笔顺，正在刷新动态预览');
   });
   document.querySelector('[data-action="undo-region"]').addEventListener('click', () => {
     for (let i = state.regions.length - 1; i >= 0; i -= 1) {
@@ -977,11 +1006,13 @@ body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,s
     }
     updateControls();
     draw();
+    requestPreviewRender('已撤销区域，正在刷新动态预览');
   });
   document.querySelector('[data-action="clear-regions"]').addEventListener('click', () => {
     state.regions = [];
     updateControls();
     draw();
+    requestPreviewRender('已清空区域，正在刷新动态预览');
   });
   document.querySelector('[data-action="clear-all"]').addEventListener('click', () => {
     state.strokes = [];
@@ -990,6 +1021,7 @@ body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,s
     output.value = '';
     updateControls();
     draw();
+    requestPreviewRender('已清空全部内容');
   });
   document.querySelector('[data-action="render-preview"]').addEventListener('click', renderPreviews);
   document.querySelector('[data-action="export-json"]').addEventListener('click', exportJson);
