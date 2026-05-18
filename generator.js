@@ -13,6 +13,7 @@
   const regionCountEl = document.querySelector('[data-region-count]');
   const modeLabel = document.querySelector('[data-mode-label]');
   const stateEl = document.querySelector('[data-state]');
+  const canvasHelp = document.querySelector('[data-canvas-help]');
   const previewStages = {
     black: document.querySelector('[data-preview-stage="black"]'),
     gradient: document.querySelector('[data-preview-stage="gradient"]'),
@@ -26,11 +27,12 @@
     currentStroke: null,
     currentRegion: null,
     replaying: false,
+    projectReady: false,
     size: { ...DEFAULT_SIZE },
-    sourceName: 'signature-original.png',
-    sourceDataUrl: './signature-original.png',
-    inkDataUrl: './signature-original-transparent.png',
-    gradientDataUrl: './signature-gradient.png',
+    sourceName: '',
+    sourceDataUrl: '',
+    inkDataUrl: '',
+    gradientDataUrl: '',
     strokes: [],
     regions: [],
     previewVersion: 0,
@@ -58,7 +60,6 @@
     resizeCanvas();
     draw();
   };
-  guide.src = state.sourceDataUrl;
 
   function svgEl(name, attrs = {}) {
     const el = document.createElementNS(SVG_NS, name);
@@ -79,6 +80,24 @@
 
   function setState(text) {
     stateEl.textContent = text;
+  }
+
+  function setWorkflowStep(stepName) {
+    document.querySelectorAll('[data-step]').forEach((step) => {
+      step.classList.toggle('is-active', step.dataset.step === stepName);
+    });
+  }
+
+  function updateWorkflow() {
+    if (!state.projectReady) setWorkflowStep('upload');
+    else if (!state.strokes.length) setWorkflowStep('stroke');
+    else if (state.mode === 'region' || !state.regions.length) setWorkflowStep('region');
+    else setWorkflowStep('preview');
+    if (canvasHelp) {
+      canvasHelp.textContent = state.projectReady
+        ? (state.mode === 'stroke' ? '按真实书写顺序描中心线；每次按下到松开是一笔。' : '选择当前笔画，用套索/矩形圈出该笔负责显现的墨迹。')
+        : '先上传签名。这里用于描笔顺和划区域，不是最终动画预览。';
+    }
   }
 
   function requestPreviewRender(message) {
@@ -121,10 +140,18 @@
     ctx.clearRect(0, 0, state.size.width, state.size.height);
     ctx.fillStyle = '#f7f8fb';
     ctx.fillRect(0, 0, state.size.width, state.size.height);
-    if (guide.complete) {
+    if (state.projectReady && guide.complete && state.sourceDataUrl) {
       ctx.save();
       ctx.globalAlpha = 0.24;
       ctx.drawImage(guide, 0, 0, state.size.width, state.size.height);
+      ctx.restore();
+    } else {
+      ctx.save();
+      ctx.fillStyle = '#64707d';
+      ctx.font = '34px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('请先上传静态签名图片', state.size.width / 2, state.size.height / 2);
       ctx.restore();
     }
   }
@@ -268,6 +295,7 @@
     countEl.textContent = String(state.strokes.length);
     regionCountEl.textContent = String(state.regions.length);
     modeLabel.textContent = state.mode === 'stroke' ? '笔顺' : '区域';
+    updateWorkflow();
     document.querySelectorAll('[data-mode]').forEach((button) => {
       button.setAttribute('aria-pressed', String(button.dataset.mode === state.mode));
     });
@@ -298,6 +326,10 @@
   }
 
   function beginStroke(event) {
+    if (!state.projectReady) {
+      setState('请先上传签名图片，再开始描笔顺');
+      return;
+    }
     if (state.replaying || state.mode !== 'stroke') return;
     event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
@@ -343,6 +375,14 @@
   }
 
   function beginRegion(event) {
+    if (!state.projectReady) {
+      setState('请先上传签名图片，再开始划区域');
+      return;
+    }
+    if (!state.strokes.length) {
+      setState('请先完成笔顺，再划区域');
+      return;
+    }
     if (state.replaying || state.mode !== 'region') return;
     event.preventDefault();
     canvas.setPointerCapture(event.pointerId);
@@ -485,6 +525,8 @@
   }
 
   async function buildExportData() {
+    if (!state.projectReady || !state.inkDataUrl) throw new Error('No signature project to export');
+    if (!state.strokes.length) throw new Error('No stroke order to export');
     const inkDataUrl = await toDataUrl(state.inkDataUrl);
     const sourceDataUrl = await toDataUrl(state.sourceDataUrl).catch(() => inkDataUrl);
     const gradientDataUrl = isEmbeddedDataUrl(state.gradientDataUrl)
@@ -509,8 +551,117 @@
     };
   }
 
+  function animationKeyframes(totalDuration, delay, duration, hold) {
+    const writeStart = Math.max(0, (delay / totalDuration) * 100);
+    const writeEnd = Math.max(writeStart, ((delay + duration) / totalDuration) * 100);
+    const fadeOutStart = Math.max(writeEnd, ((totalDuration - 900) / totalDuration) * 100);
+    return { writeStart, writeEnd, fadeOutStart, end: 100, totalDuration, hold };
+  }
+
+  function keyTimes(...values) {
+    let previous = 0;
+    return values.map((value, index) => {
+      let next = Math.max(0, Math.min(1, Number(value)));
+      if (index > 0 && next <= previous) next = Math.min(0.99999, previous + 0.00001);
+      previous = next;
+      return next.toFixed(5);
+    }).join(';');
+  }
+
+  function imageMime(dataUrl) {
+    const match = /^data:([^;]+);/i.exec(dataUrl || '');
+    return match ? match[1] : 'image/png';
+  }
+
+  function buildAnimatedSvg(project, variant) {
+    const size = project.canvas;
+    const image = variant === 'gradient' ? project.gradientDataUrl : project.inkDataUrl;
+    const timeline = buildTimelineFromProject(project);
+    const writeEnd = timeline.reduce((max, stroke) => Math.max(max, stroke.delay + stroke.duration), 0) + 260;
+    const loopDuration = Math.max(1400, writeEnd + project.params.hold + 900);
+    const prefix = `sig-${variant}-${Date.now().toString(36)}`;
+    const parts = [
+      `<svg xmlns="http://www.w3.org/2000/svg" width="${size.width}" height="${size.height}" viewBox="0 0 ${size.width} ${size.height}">`,
+      '<defs>',
+      '<style><![CDATA[',
+      '.write-layer{opacity:1}.final-layer{opacity:0}',
+      '@media (prefers-reduced-motion: reduce){.write-stroke,.write-layer,.final-layer{animation:none!important}.final-layer{opacity:1!important}}',
+      ']]></style>',
+    ];
+    timeline.forEach((stroke) => {
+      const maskId = `${prefix}-mask-${stroke.id}`;
+      const regionMaskId = `${prefix}-region-${stroke.id}`;
+      const includeRegions = project.regions.filter((region) => region.strokeId === stroke.id && region.operation !== 'erase');
+      const eraseRegions = project.regions.filter((region) => region.strokeId === stroke.id && region.operation === 'erase');
+      const key = animationKeyframes(loopDuration, stroke.delay, stroke.duration, project.params.hold);
+      parts.push(`<mask id="${regionMaskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="${size.width}" height="${size.height}">`);
+      parts.push(`<rect x="0" y="0" width="${size.width}" height="${size.height}" fill="black"/>`);
+      if (includeRegions.length) {
+        includeRegions.forEach((region) => {
+          parts.push(`<path d="${regionToPath(region)}" fill="white" stroke="white" stroke-width="${project.params.regionOverlap}" stroke-linejoin="round" stroke-linecap="round"/>`);
+        });
+        eraseRegions.forEach((region) => {
+          parts.push(`<path d="${regionToPath(region)}" fill="black" stroke="black" stroke-width="${project.params.regionOverlap}" stroke-linejoin="round" stroke-linecap="round"/>`);
+        });
+      } else {
+        parts.push(`<rect x="0" y="0" width="${size.width}" height="${size.height}" fill="white"/>`);
+      }
+      parts.push('</mask>');
+      parts.push(`<mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="${size.width}" height="${size.height}">`);
+      parts.push(`<rect x="0" y="0" width="${size.width}" height="${size.height}" fill="black"/>`);
+      parts.push(`<g mask="url(#${regionMaskId})">`);
+      parts.push(`<path class="write-stroke" d="${pointsToPath(stroke.points)}" fill="none" stroke="white" stroke-width="${project.params.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1">`);
+      parts.push(`<animate attributeName="stroke-dashoffset" values="1;1;0;0;1" keyTimes="${keyTimes(0, key.writeStart / 100, key.writeEnd / 100, key.fadeOutStart / 100, 1)}" dur="${loopDuration}ms" repeatCount="indefinite"/>`);
+      parts.push('</path></g></mask>');
+    });
+    parts.push('</defs>');
+    timeline.forEach((stroke) => {
+      const maskId = `${prefix}-mask-${stroke.id}`;
+      parts.push(`<image class="write-layer" href="${image}" width="${size.width}" height="${size.height}" mask="url(#${maskId})">`);
+      parts.push(`<animate attributeName="opacity" values="1;1;0;0" keyTimes="${keyTimes(0, (writeEnd + 220) / loopDuration, (writeEnd + 440) / loopDuration, 1)}" dur="${loopDuration}ms" repeatCount="indefinite"/>`);
+      parts.push('</image>');
+    });
+    parts.push(`<image class="final-layer" href="${image}" width="${size.width}" height="${size.height}" type="${imageMime(image)}">`);
+    parts.push(`<animate attributeName="opacity" values="0;0;1;1;0" keyTimes="${keyTimes(0, writeEnd / loopDuration, (writeEnd + 220) / loopDuration, (writeEnd + 220 + project.params.hold) / loopDuration, 1)}" dur="${loopDuration}ms" repeatCount="indefinite"/>`);
+    parts.push('</image>');
+    parts.push('</svg>');
+    return parts.join('');
+  }
+
+  function buildTimelineFromProject(project) {
+    let cursor = 0;
+    return project.strokes.map((stroke, index) => {
+      const base = Math.max(240, Math.min(1300, (stroke.duration || 900) * 0.18));
+      const duration = base * project.params.speed;
+      const overlap = index > 0 ? project.params.overlap * project.params.speed : 0;
+      const delay = Math.max(0, cursor - overlap);
+      cursor = Math.max(cursor, delay + duration);
+      return { ...stroke, delay, duration };
+    });
+  }
+
+  async function exportSvg(variant) {
+    try {
+      setState(`正在导出${variant === 'gradient' ? '渐变' : '黑色'} SVG`);
+      const project = await buildExportData();
+      const svg = buildAnimatedSvg(project, variant);
+      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = variant === 'gradient' ? 'dynamic-signature-gradient.svg' : 'dynamic-signature-black.svg';
+      a.click();
+      URL.revokeObjectURL(url);
+      setState('SVG 已导出，可直接打开或嵌入网页');
+      setWorkflowStep('export');
+    } catch (error) {
+      setState(`导出失败：${error.message || '请先上传签名并生成预览'}`);
+    }
+  }
+
   function importProject(project) {
     state.size = project.canvas || { ...DEFAULT_SIZE };
+    state.projectReady = Boolean(project.inkDataUrl || project.sourceDataUrl);
     state.sourceName = project.sourceName || 'signature.png';
     state.sourceDataUrl = project.sourceDataUrl || state.sourceDataUrl;
     state.inkDataUrl = project.inkDataUrl || state.inkDataUrl;
@@ -530,7 +681,7 @@
     })).filter((stroke) => stroke.points.length >= 2);
     state.regions = (project.regions || []).map((region, index) => ({ ...region, id: index + 1 }));
     resizeCanvas();
-    guide.src = state.sourceDataUrl;
+    if (state.sourceDataUrl) guide.src = state.sourceDataUrl;
     Object.entries(state.colors).forEach(([key, value]) => {
       const input = document.querySelector(`[data-color="${key}"]`);
       if (input) input.value = value;
@@ -738,6 +889,22 @@
   }
 
   async function renderPreviews() {
+    if (!state.projectReady || !state.inkDataUrl) {
+      state.players.forEach((player) => player.destroy());
+      state.players = [];
+      previewStages.black.textContent = '上传签名并描写笔顺后，这里显示黑色动态预览';
+      previewStages.gradient.textContent = '上传签名并描写笔顺后，这里显示渐变动态预览';
+      setState('等待上传签名');
+      return;
+    }
+    if (!state.strokes.length) {
+      state.players.forEach((player) => player.destroy());
+      state.players = [];
+      previewStages.black.textContent = '已上传签名。请先在上方画布按真实顺序描写笔顺';
+      previewStages.gradient.textContent = '完成笔顺后会自动生成渐变动态预览';
+      setState('已上传签名，请开始描写笔顺');
+      return;
+    }
     const version = state.previewVersion + 1;
     state.previewVersion = version;
     state.gradientDataUrl = await makeGradientInk(state.inkDataUrl);
@@ -752,177 +919,16 @@
   }
 
   async function exportJson() {
-    setState('正在内嵌图片并生成工程 JSON');
-    const project = await buildExportData();
-    output.value = JSON.stringify(project, null, 2);
-    output.focus();
-    output.select();
-    setState('工程 JSON 已生成，图片已内嵌');
-  }
-
-  function escapeScriptEnd(text) {
-    return text.replace(/<\/script/gi, '<\\/script');
-  }
-
-  async function exportHtml() {
-    setState('正在内嵌图片并导出网页');
-    const project = JSON.stringify(await buildExportData());
-    const html = `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Dynamic Signature</title>
-<style>${document.querySelector('style')?.textContent || ''}${inlineExportCss()}</style>
-</head>
-<body>
-<main class="export-page">
-  <section>
-    <h1>黑色动态签名</h1>
-    <div class="preview-stage" data-preview-stage="black"></div>
-  </section>
-  <section>
-    <h1>彩色渐变动态签名</h1>
-    <div class="preview-stage" data-preview-stage="gradient"></div>
-  </section>
-</main>
-<script>window.SIGNATURE_PROJECT=${escapeScriptEnd(project)};<\\/script>
-<script>${escapeScriptEnd(exportRuntime())}<\\/script>
-</body>
-</html>`;
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'dynamic-signature.html';
-    a.click();
-    URL.revokeObjectURL(url);
-    setState('完整网页已导出，下载后可直接打开');
-  }
-
-  function inlineExportCss() {
-    return `
-body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,system-ui,"Segoe UI","Noto Sans SC",sans-serif}.export-page{width:min(1080px,calc(100% - 28px));margin:0 auto;padding:28px 0;display:grid;gap:28px}h1{margin:0 0 10px;color:#64707d;font-size:16px;font-weight:500}.preview-stage{width:100%;aspect-ratio:${state.size.width}/${state.size.height}}.preview-stage svg{width:100%;height:100%;display:block;overflow:visible}.generated-write-layer{opacity:1;transition:opacity 220ms ease}.final-layer{opacity:0;transition:opacity 220ms ease}.mask-stroke{fill:none;stroke:white;stroke-linecap:round;stroke-linejoin:round}@keyframes signature-write{to{stroke-dashoffset:0}}`;
-  }
-
-  function exportRuntime() {
-    return `(${exportRuntimeFactory.toString()})(window.SIGNATURE_PROJECT);`;
-  }
-
-  function exportRuntimeFactory(project) {
-    const SVG_NS = 'http://www.w3.org/2000/svg';
-    const XLINK_NS = 'http://www.w3.org/1999/xlink';
-    const round = (value) => Math.round(Number(value) * 10) / 10;
-    function svgEl(name, attrs = {}) {
-      const el = document.createElementNS(SVG_NS, name);
-      Object.entries(attrs).forEach(([key, value]) => {
-        if (key === 'href') {
-          el.setAttribute('href', String(value));
-          el.setAttributeNS(XLINK_NS, 'xlink:href', String(value));
-        } else {
-          el.setAttribute(key, String(value));
-        }
-      });
-      return el;
+    try {
+      setState('正在内嵌图片并生成工程 JSON');
+      const project = await buildExportData();
+      output.value = JSON.stringify(project, null, 2);
+      output.focus();
+      output.select();
+      setState('工程 JSON 已生成，图片已内嵌');
+    } catch (error) {
+      setState(`导出工程失败：${error.message || '请先上传签名并描写笔顺'}`);
     }
-    function pointsToPath(points) {
-      if (!points.length) return '';
-      const d = ['M ' + round(points[0].x) + ' ' + round(points[0].y)];
-      for (let i = 1; i < points.length; i += 1) {
-        const prev = points[i - 1];
-        const p = points[i];
-        d.push('Q ' + round(prev.x) + ' ' + round(prev.y) + ' ' + round((prev.x + p.x) / 2) + ' ' + round((prev.y + p.y) / 2));
-      }
-      const last = points[points.length - 1];
-      d.push('L ' + round(last.x) + ' ' + round(last.y));
-      return d.join(' ');
-    }
-    function regionToPath(region) {
-      if (region.kind === 'rect') {
-        const x = round(region.x);
-        const y = round(region.y);
-        return 'M ' + x + ' ' + y + ' H ' + round(x + region.width) + ' V ' + round(y + region.height) + ' H ' + x + ' Z';
-      }
-      return 'M ' + region.points.map((p) => round(p.x) + ' ' + round(p.y)).join(' L ') + ' Z';
-    }
-    function build(container, variant) {
-      const size = project.canvas;
-      const image = variant === 'gradient' ? project.gradientDataUrl : project.inkDataUrl;
-      const svg = svgEl('svg', { viewBox: '0 0 ' + size.width + ' ' + size.height });
-      const defs = svgEl('defs');
-      const group = svgEl('g');
-      svg.append(defs, group);
-      const finalLayer = svgEl('image', { class: 'final-layer', href: image, width: size.width, height: size.height, opacity: 0 });
-      group.appendChild(finalLayer);
-      let cursor = 0;
-      const timeline = project.strokes.map((stroke, index) => {
-        const base = Math.max(240, Math.min(1300, (stroke.duration || 900) * 0.18));
-        const duration = base * project.params.speed;
-        const overlap = index > 0 ? project.params.overlap * project.params.speed : 0;
-        const delay = Math.max(0, cursor - overlap);
-        cursor = Math.max(cursor, delay + duration);
-        return { ...stroke, delay, duration };
-      });
-      let totalDuration = 0;
-      timeline.forEach((stroke) => {
-        totalDuration = Math.max(totalDuration, stroke.delay + stroke.duration);
-        const maskId = variant + '-mask-' + stroke.id;
-        const regionMaskId = variant + '-region-' + stroke.id;
-        const mask = svgEl('mask', { id: maskId, maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: size.width, height: size.height });
-        mask.appendChild(svgEl('rect', { x: 0, y: 0, width: size.width, height: size.height, fill: 'black' }));
-        const regionMask = svgEl('mask', { id: regionMaskId, maskUnits: 'userSpaceOnUse', x: 0, y: 0, width: size.width, height: size.height });
-        regionMask.appendChild(svgEl('rect', { x: 0, y: 0, width: size.width, height: size.height, fill: 'black' }));
-        const includeRegions = project.regions.filter((region) => region.strokeId === stroke.id && region.operation !== 'erase');
-        const eraseRegions = project.regions.filter((region) => region.strokeId === stroke.id && region.operation === 'erase');
-        if (includeRegions.length) {
-          includeRegions.forEach((region) => regionMask.appendChild(svgEl('path', { d: regionToPath(region), fill: 'white', stroke: 'white', 'stroke-width': project.params.regionOverlap, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' })));
-          eraseRegions.forEach((region) => regionMask.appendChild(svgEl('path', { d: regionToPath(region), fill: 'black', stroke: 'black', 'stroke-width': project.params.regionOverlap, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' })));
-        } else {
-          regionMask.appendChild(svgEl('rect', { x: 0, y: 0, width: size.width, height: size.height, fill: 'white' }));
-        }
-        defs.appendChild(regionMask);
-        const clipped = svgEl('g', { mask: 'url(#' + regionMaskId + ')' });
-        clipped.appendChild(svgEl('path', { class: 'mask-stroke', d: pointsToPath(stroke.points), fill: 'none', stroke: 'white', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'data-delay': round(stroke.delay), 'data-duration': round(stroke.duration), 'data-width': project.params.strokeWidth, 'data-easing': 'cubic-bezier(.33,.18,.22,.92)' }));
-        mask.appendChild(clipped);
-        defs.appendChild(mask);
-        group.appendChild(svgEl('image', { class: 'generated-write-layer', href: image, width: size.width, height: size.height, opacity: 1, mask: 'url(#' + maskId + ')' }));
-      });
-      container.appendChild(svg);
-      function play() {
-        finalLayer.style.transitionDuration = '0ms';
-        finalLayer.style.opacity = '0';
-        finalLayer.setAttribute('opacity', '0');
-        finalLayer.getBoundingClientRect();
-        finalLayer.style.transitionDuration = '';
-        container.querySelectorAll('.generated-write-layer').forEach((layer) => { layer.style.opacity = '1'; layer.setAttribute('opacity', '1'); });
-        container.querySelectorAll('.mask-stroke').forEach((stroke) => {
-          const length = stroke.getTotalLength();
-          stroke.style.strokeWidth = stroke.dataset.width;
-          stroke.style.strokeDasharray = String(length);
-          stroke.style.strokeDashoffset = String(length);
-          stroke.style.animation = 'none';
-          stroke.getBoundingClientRect();
-          stroke.style.animation = 'signature-write ' + stroke.dataset.duration + 'ms ' + stroke.dataset.easing + ' ' + stroke.dataset.delay + 'ms forwards';
-        });
-        setTimeout(() => {
-          finalLayer.style.opacity = '1';
-          finalLayer.setAttribute('opacity', '1');
-          setTimeout(() => container.querySelectorAll('.generated-write-layer').forEach((layer) => { layer.style.opacity = '0'; layer.setAttribute('opacity', '0'); }), 220);
-          setTimeout(() => {
-            finalLayer.style.transitionDuration = '900ms';
-            finalLayer.style.opacity = '0';
-            finalLayer.setAttribute('opacity', '0');
-            setTimeout(() => {
-              finalLayer.style.transitionDuration = '';
-              play();
-            }, 900);
-          }, 220 + project.params.hold);
-        }, totalDuration + 260);
-      }
-      play();
-    }
-    build(document.querySelector('[data-preview-stage="black"]'), 'black');
-    build(document.querySelector('[data-preview-stage="gradient"]'), 'gradient');
   }
 
   function replayStrokePreview() {
@@ -1049,7 +1055,8 @@ body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,s
   });
   document.querySelector('[data-action="render-preview"]').addEventListener('click', renderPreviews);
   document.querySelector('[data-action="export-json"]').addEventListener('click', exportJson);
-  document.querySelector('[data-action="download-html"]').addEventListener('click', exportHtml);
+  document.querySelector('[data-action="download-black-svg"]').addEventListener('click', () => exportSvg('black'));
+  document.querySelector('[data-action="download-gradient-svg"]').addEventListener('click', () => exportSvg('gradient'));
   document.querySelectorAll('[data-preview]').forEach((button) => {
     button.addEventListener('click', () => {
       const player = state.players.find((item) => item.variant === button.dataset.preview);
@@ -1061,6 +1068,7 @@ body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,s
     const file = event.target.files && event.target.files[0];
     if (!file) return;
     state.sourceName = file.name;
+    state.projectReady = true;
     state.sourceDataUrl = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result));
@@ -1093,29 +1101,8 @@ body{margin:0;background:#f5f7fa;color:#1f2328;font-family:Inter,ui-sans-serif,s
     reader.readAsText(file);
   });
 
-  async function bootstrapDemo() {
-    const response = await fetch('./stroke-order.json');
-    if (response.ok) {
-      const project = await response.json();
-      state.strokes = (project.strokes || []).map((stroke, index) => ({
-        id: index + 1,
-        pointerType: stroke.pointerType || 'imported',
-        duration: Number(stroke.duration || 0),
-        points: (stroke.points || []).map((point) => ({
-          x: Number(point.x),
-          y: Number(point.y),
-          t: Number(point.t || 0),
-          pressure: Number(point.pressure || 0.5),
-        })),
-      })).filter((stroke) => stroke.points.length >= 2);
-      state.regions = (project.regions || []).map((region, index) => ({ ...region, id: index + 1 }));
-    }
-    updateControls();
-    await renderPreviews();
-    draw();
-  }
-
   resizeCanvas();
   updateControls();
-  bootstrapDemo();
+  renderPreviews();
+  draw();
 })();

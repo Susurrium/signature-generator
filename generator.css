@@ -114,6 +114,39 @@ button[aria-pressed="true"] {
   justify-content: flex-end;
 }
 
+.workflow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.step {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.step strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.9rem;
+}
+
+.step span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.step.is-active {
+  border-color: var(--accent);
+  background: #e6f4f1;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -205,6 +238,25 @@ button[aria-pressed="true"] {
   overflow: hidden;
 }
 
+.panel-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title h2 {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.panel-title p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 #signatureCanvas {
   display: block;
   width: 100%;
@@ -241,9 +293,16 @@ button[aria-pressed="true"] {
 }
 
 .preview-stage {
+  display: grid;
+  place-items: center;
   width: 100%;
   aspect-ratio: var(--signature-aspect, 2172 / 724);
   overflow: visible;
+  border: 1px dashed #c9d3df;
+  border-radius: 6px;
+  background: #fbfcfe;
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .preview-stage svg {
@@ -304,7 +363,8 @@ button[aria-pressed="true"] {
 
 @media (max-width: 1100px) {
   .workspace,
-  .preview-grid {
+  .preview-grid,
+  .workflow {
     grid-template-columns: 1fr;
   }
 
