@@ -117,34 +117,69 @@ button[aria-pressed="true"] {
 .workflow {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 .step {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   min-width: 0;
-  border: 1px solid var(--line);
+  min-height: 112px;
+  border: 2px solid #cbd6e2;
   border-radius: 8px;
-  padding: 10px;
-  background: var(--surface);
+  padding: 14px 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9fc 100%);
+  box-shadow: 0 12px 28px rgba(18, 25, 38, 0.08);
 }
 
 .step strong {
   display: block;
-  margin-bottom: 4px;
-  font-size: 0.9rem;
+  margin: 2px 0 6px;
+  color: #24313f;
+  font-size: 1rem;
+  line-height: 1.2;
 }
 
 .step span {
   display: block;
+}
+
+.step div > span {
   color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.45;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.step-number {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #dbe5ef;
+  color: #314155;
+  font-weight: 800;
+  font-size: 1.05rem;
+  line-height: 1;
 }
 
 .step.is-active {
   border-color: var(--accent);
-  background: #e6f4f1;
+  background: linear-gradient(180deg, #ecfdf8 0%, #dff5ef 100%);
+  box-shadow: 0 16px 34px rgba(15, 118, 110, 0.18);
+}
+
+.step.is-active .step-number {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.step.is-active strong {
+  color: #0b5f59;
 }
 
 .workspace {
