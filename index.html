@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signature Animation Generator</title>
+    <link rel="stylesheet" href="./generator.css" />
+  </head>
+  <body>
+    <main class="generator-page">
+      <section class="topbar" aria-label="签名动画生成器">
+        <div>
+          <h1>签名动画生成器</h1>
+          <p>上传静态签名，描写笔顺，圈定每笔墨迹区域，调节颜色和速度，导出完整动态签名网页。</p>
+        </div>
+        <div class="topbar-actions">
+          <label class="button file-button">
+            上传签名
+            <input type="file" accept="image/png,image/jpeg,image/webp" data-upload hidden />
+          </label>
+          <label class="button file-button">
+            导入工程
+            <input type="file" accept="application/json" data-import hidden />
+          </label>
+          <button type="button" data-action="export-json">导出工程</button>
+          <button type="button" data-action="download-html">导出网页</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="panel controls" aria-label="工具和参数">
+          <div class="control-group">
+            <h2>采集</h2>
+            <div class="segmented" role="group" aria-label="模式">
+              <button type="button" data-mode="stroke" aria-pressed="true">笔顺</button>
+              <button type="button" data-mode="region" aria-pressed="false">区域</button>
+            </div>
+            <label>
+              当前笔画
+              <select data-stroke-select></select>
+            </label>
+            <div class="segmented" role="group" aria-label="区域工具">
+              <button type="button" data-tool="lasso" aria-pressed="true">套索</button>
+              <button type="button" data-tool="rect" aria-pressed="false">矩形</button>
+              <button type="button" data-tool="erase" aria-pressed="false">擦除</button>
+            </div>
+            <div class="button-grid">
+              <button type="button" data-action="toggle-markers" aria-pressed="false">序号</button>
+              <button type="button" data-action="replay-strokes">回放</button>
+              <button type="button" data-action="undo-stroke">撤销笔顺</button>
+              <button type="button" data-action="undo-region">撤销区域</button>
+              <button type="button" data-action="clear-regions">清空区域</button>
+              <button type="button" data-action="clear-all">全部清空</button>
+            </div>
+          </div>
+
+          <div class="control-group">
+            <h2>动画</h2>
+            <label>
+              整体速度
+              <input type="range" min="0.55" max="1.4" step="0.01" value="0.82" data-param="speed" />
+              <output data-output="speed">0.82</output>
+            </label>
+            <label>
+              字母衔接
+              <input type="range" min="0" max="360" step="5" value="210" data-param="overlap" />
+              <output data-output="overlap">210ms</output>
+            </label>
+            <label>
+              笔画宽度
+              <input type="range" min="30" max="180" step="2" value="110" data-param="strokeWidth" />
+              <output data-output="strokeWidth">110</output>
+            </label>
+            <label>
+              区域容错
+              <input type="range" min="0" max="32" step="1" value="12" data-param="regionOverlap" />
+              <output data-output="regionOverlap">12</output>
+            </label>
+            <label>
+              完成停留
+              <input type="range" min="0" max="6000" step="100" value="2600" data-param="hold" />
+              <output data-output="hold">2600ms</output>
+            </label>
+          </div>
+
+          <div class="control-group">
+            <h2>渐变</h2>
+            <div class="color-grid">
+              <label>左<input type="color" value="#2563eb" data-color="left" /></label>
+              <label>中一<input type="color" value="#7c3aed" data-color="mid1" /></label>
+              <label>中二<input type="color" value="#ec4899" data-color="mid2" /></label>
+              <label>右<input type="color" value="#f97316" data-color="right" /></label>
+            </div>
+            <button type="button" data-action="render-preview">刷新预览</button>
+          </div>
+
+          <div class="status" aria-live="polite">
+            <div>笔顺 <strong data-count>0</strong></div>
+            <div>区域 <strong data-region-count>0</strong></div>
+            <div>模式 <strong data-mode-label>笔顺</strong></div>
+            <div><span data-state>等待上传或书写</span></div>
+          </div>
+        </aside>
+
+        <section class="stage-column">
+          <section class="panel canvas-panel" aria-label="签名采集画布">
+            <canvas id="signatureCanvas" width="2172" height="724"></canvas>
+          </section>
+
+          <section class="preview-grid" aria-label="动态签名预览">
+            <div class="panel preview-card">
+              <div class="preview-head">
+                <h2>黑色动态版本</h2>
+                <button type="button" data-preview="black">重播</button>
+              </div>
+              <div class="preview-stage" data-preview-stage="black"></div>
+            </div>
+            <div class="panel preview-card">
+              <div class="preview-head">
+                <h2>彩色渐变版本</h2>
+                <button type="button" data-preview="gradient">重播</button>
+              </div>
+              <div class="preview-stage" data-preview-stage="gradient"></div>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section class="panel output-panel">
+        <label for="projectOutput">工程 JSON</label>
+        <textarea id="projectOutput" spellcheck="false" placeholder="导出的工程 JSON 会显示在这里。"></textarea>
+      </section>
+    </main>
+
+    <script src="./generator.js"></script>
+  </body>
+</html>
